@@ -5,7 +5,7 @@ Key Features
 
 Backbone: EfficientNet-B0
 Detection Framework: Feature Pyramid Network (FPN) with Faster R-CNN
-Dataset: COCO 2017 (train2017: 118,286 valid images, val2017: 4,995 valid images after filtering)
+Dataset: COCO 2017 (train2017: 118,286 valid images, val2017: 4,995 valid images after filtering) 
 Optimizations:
 Mixed precision training using torch.amp
 Gradient accumulation for effective batch size of 16
