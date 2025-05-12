@@ -94,8 +94,8 @@ if __name__ == '__main__':
     train_dataset = COCODataset(
         root=train_img_dir,
         annFile=train_ann_file,
-        transforms=get_transform(train=True),
-        max_images=10000  # Limit to 10,000 images
+        transforms=get_transform(train=True)
+        # Removed max_images to process all valid images
     )
     val_dataset = COCODataset(
         root=val_img_dir,
@@ -104,7 +104,7 @@ if __name__ == '__main__':
     )
     train_loader = DataLoader(
         train_dataset,
-        batch_size=8,  # Increased to speed up training
+        batch_size=8,
         shuffle=True,
         num_workers=0,
         pin_memory=True,
@@ -128,7 +128,7 @@ if __name__ == '__main__':
     else:
         print("Warning: GPU not available, using CPU. Training will be slower.")
     
-    # Build model (assumes fpn_efficientnet.py is updated to use EfficientNet-B0)
+    # Build model
     model = build_efficientnet_fpn(num_classes=91).to(device)
     # Compile model for faster execution
     try:
@@ -141,7 +141,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.SGD(params, lr=0.001, momentum=0.9, weight_decay=0.0005)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     scaler = amp.GradScaler('cuda')
-    num_epochs = 5  # Increased since we're using a smaller dataset
+    num_epochs = 5
     for epoch in range(num_epochs):
         train_one_epoch(model, optimizer, train_loader, device, epoch, scaler)
         lr_scheduler.step()
