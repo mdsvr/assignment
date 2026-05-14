@@ -1,0 +1,376 @@
+Creating Static Data for MDS Analysis
+Creating Static Data for
+Microarchitectural Data Sampling
+(MDS) Analysis
+A Guide to Dataset Generation for MDS Research
+Research Document
+May 2026
+Page 1/15
+Creating Static Data for MDS Analysis
+Table of Contents
+1. Introduction
+2. Data Sources for MDS Analysis
+3. Hardware Performance Counter (HPC) Data Collection
+4. Feature Engineering
+5. Synthetic Data Generation Methodology
+6. Static Dataset Schema Design
+7. Data Collection Tools and Implementation
+8. Labeling Strategy
+9. Dataset Validation
+10. Example Dataset and Code
+11. References
+Page 2/15
+Creating Static Data for MDS Analysis
+1. Introduction
+Detecting Microarchitectural Data Sampling (MDS) attacks requires labeled datasets that capture system-level behavior
+during both benign operation and active attacks. This document provides a comprehensive guide to creating static
+datasets suitable for training machine learning models to detect MDS attacks.
+A "static dataset" in this context refers to a pre-collected, structured dataset that can be used offline for model training,
+validation, and testing. Unlike real-time detection systems, static datasets allow reproducible experiments, controlled
+comparison of different ML approaches, and systematic evaluation of detection accuracy.
+The primary approach for creating MDS detection datasets relies on Hardware Performance Counters (HPCs) -
+special-purpose registers in the CPU that count hardware-related events such as cache misses, branch mispredictions,
+and instruction counts. These counters provide a non-intrusive way to observe microarchitectural behavior that changes
+during attack execution.
+Page 3/15
+Creating Static Data for MDS Analysis
+2. Data Sources for MDS Analysis
+2.1 Hardware Performance Counters (HPCs)
+HPCs are the primary data source for MDS detection. Key counters include:
+Counter Name Description Relevance to MDS
+LLC-load-misses Last-level cache misses Flush+Reload pattern
+L1-dcache-load-misses L1 data cache misses Cache side-channel
+branch-misses Branch mispredictions Speculative execution
+branch-instructions Total branches Baseline activity
+instructions Instructions retired Workload intensity
+cache-references Cache accesses Memory access pattern
+page-faults Page fault events MDS trigger mechanism
+context-switches Context switch count Scheduling behavior
+2.2 Energy Consumption Traces (RAPL)
+Intel Running Average Power Limit (RAPL) interface provides system-wide energy consumption data. Research
+(MAD-EN) has shown that energy traces can detect microarchitectural attacks with high accuracy. RAPL data includes:
+-Package energy (entire CPU)
+-Core energy (CPU cores)
+-DRAM energy (memory)
+-Uncore energy (cache, memory controller)
+2.3 System Call Traces
+MDS attacks may generate distinctive system call patterns, especially during buffer flushing and page fault operations.
+Capturing syscall sequences provides an additional detection signal.
+Page 4/15
+Creating Static Data for MDS Analysis
+3. Hardware Performance Counter (HPC) Data Collection
+3.1 Collection Tools
+Primary tools for HPC data collection:
+-perf (Linux): Standard Linux performance monitoring tool
+-PAPI: Performance Application Programming Interface
+-Intel VTune: Intel commercial profiling tool
+-likwid: Lightweight performance monitoring toolkit
+-gem5 Simulator: For controlled simulation environments
+3.2 Collection Methodology with perf
+Using the Linux perf tool to collect HPC data:
+# Collect multiple hardware counters simultaneously
+perf stat -e LLC-load-misses,L1-dcache-load-misses,\
+  branch-misses,branch-instructions,instructions,\
+  cache-references,page-faults \
+  -I 100 -o output.csv --append \
+  -- ./target_program
+# For per-process monitoring:
+perf stat -e <events> -p <PID> -I 100 -o data.csv
+3.3 Sampling Rate Considerations
+The sampling interval significantly affects detection accuracy:
+-10ms intervals: High resolution, large dataset, may capture transient effects
+-100ms intervals: Good balance of resolution and manageability
+-1000ms intervals: Lower resolution but captures sustained attack patterns
+Research suggests 100ms intervals provide optimal tradeoff between detection latency and accuracy for most MDS
+attack variants.
+Page 5/15
+Creating Static Data for MDS Analysis
+4. Feature Engineering
+4.1 Raw Counter Features
+Direct HPC readings form the base features:
+-Absolute counter values per sampling interval
+-Counter rates (events per second)
+-Counter ratios (e.g., cache-miss-ratio = misses / references)
+4.2 Derived Features
+Statistical features computed over sliding windows:
+-Mean, standard deviation, variance of each counter
+-Min/max values within a time window
+-Rate of change (first derivative) of counter values
+-Coefficient of variation (CV = std/mean)
+-Skewness and kurtosis of counter distributions
+4.3 MDS-Specific Features
+Features tailored to MDS detection:
+-Cache miss to instruction ratio (high during Flush+Reload)
+-Page fault frequency (MDS triggers use page faults)
+-Branch misprediction rate (speculative execution indicator)
+-L1-miss to LLC-miss ratio (indicates cache manipulation)
+-Instructions per cycle (IPC) anomalies during attacks
+-Store-to-load forwarding events (specific to MSBDS)
+4.4 Temporal Features
+Time-series derived features:
+-Autocorrelation of counter values (attack periodicity)
+-Burst detection (sudden spikes in specific counters)
+-Trend analysis (sustained elevation in counter values)
+-Cross-correlation between different counters
+Page 6/15
+Creating Static Data for MDS Analysis
+5. Synthetic Data Generation Methodology
+5.1 Benign Workload Generation
+Benign data samples should cover diverse system activity:
+-CPU-intensive: Matrix multiplication, compression (bzip2), encryption
+-Memory-intensive: STREAM benchmark, large array traversals
+-I/O-intensive: File operations, database queries
+-Mixed workloads: Web servers, compilation, video encoding
+-Idle/low activity: Minimal background processes
+Example benign programs used in HARPY dataset:
+Benign Programs:
+1. Matrix multiplier (CPU-bound computation)
+2. stress -c (CPU stress test)
+3. stress -m (Memory stress test)
+4. MiBench (Embedded benchmark suite)
+5. STREAM (Memory bandwidth benchmark)
+6. bzip2 (Compression workload)
+7. ffmpeg (Video encoding workload)
+5.2 Attack Workload Generation
+MDS attack samples can be generated using proof-of-concept implementations:
+-ZombieLoad PoC: https://github.com/IAIK/ZombieLoad
+-RIDL PoC: https://github.com/vusec/ridl
+-MDS Tool: https://github.com/mdsattacks/mds-checker
+For each MDS variant, run the PoC while collecting HPC data:
+# Example: Collecting data during ZombieLoad attack
+# Terminal 1: Run the attack
+./zombieload_attack --variant fill_buffer
+# Terminal 2: Collect HPC data
+perf stat -e LLC-load-misses,L1-dcache-load-misses,\
+  branch-misses,instructions,cache-references,page-faults \
+  -I 100 -a -o attack_data.csv
+5.3 Controlled Environment Setup
+Requirements for reliable data collection:
+-Disable hardware mitigations: Boot with mds=off to observe unmitigated behavior
+-Isolate CPUs: Use CPU pinning (taskset) to control core assignment
+-Minimize noise: Disable unnecessary services, use minimal OS
+-Control SMT: Test with hyperthreading both enabled and disabled
+-Multiple runs: Collect 100+ samples per class for statistical significance
+Page 7/15
+Creating Static Data for MDS Analysis
+6. Static Dataset Schema Design
+6.1 CSV Format Schema
+Recommended dataset format (one row per time window sample):
+Schema: MDS_dataset.csv
+----------------------------
+timestamp          : float  - Unix timestamp of sample
+sample_id          : int    - Unique sample identifier
+run_id             : int    - Experiment run identifier
+llc_load_misses    : int    - LLC load misses count
+l1d_load_misses    : int    - L1 data cache load misses
+branch_misses      : int    - Branch misprediction count
+branch_instr       : int    - Total branch instructions
+instructions       : int    - Instructions retired
+cache_references   : int    - Cache reference count
+page_faults        : int    - Page fault count
+context_switches   : int    - Context switch count
+cpu_cycles         : int    - CPU cycles elapsed
+cache_miss_ratio   : float  - Derived: misses/references
+ipc                : float  - Derived: instructions/cycles
+branch_miss_rate   : float  - Derived: misses/branches
+label              : string - Class label
+attack_variant     : string - MDS variant (if attack)
+----------------------------
+Labels: benign, msbds, mfbds, mlpds, mdsum
+6.2 Multi-Class Label Design
+Labels should support both binary and multi-class classification:
+Label Binary Description
+benign_cpu 0 CPU-intensive normal workload
+benign_mem 0 Memory-intensive normal workload
+benign_io 0 I/O-intensive normal workload
+benign_mixed 0 Mixed normal workload
+msbds 1 Store Buffer Data Sampling attack
+mfbds 1 Fill Buffer Data Sampling attack
+mlpds 1 Load Port Data Sampling attack
+mdsum 1 Uncacheable Memory Sampling
+6.3 Dataset Splitting Strategy
+Recommended dataset splits:
+-Training: 60% of runs (note: split by run_id, not individual samples)
+-Validation: 20% of runs
+-Testing: 20% of runs
+Important: Always split by run_id to prevent data leakage from temporal correlation within runs.
+Page 8/15
+Creating Static Data for MDS Analysis
+7. Data Collection Tools and Implementation
+7.1 Python Collection Script
+import subprocess
+import csv
+import time
+import os
+class HPCCollector:
+    """Collect Hardware Performance Counter data."""
+    
+    EVENTS = [
+        "LLC-load-misses",
+        "L1-dcache-load-misses",
+        "branch-misses",
+        "branch-instructions",
+        "instructions",
+        "cache-references",
+        "page-faults"
+    ]
+    
+    def __init__(self, interval_ms=100, output_file="hpc_data.csv"):
+        self.interval = interval_ms
+        self.output = output_file
+    
+    def collect(self, target_cmd, duration_s=60, label="benign"):
+        """Run target and collect HPC data."""
+        events = ",".join(self.EVENTS)
+        cmd = (
+            f"perf stat -e {events} "
+            f"-I {self.interval} "
+            f"-x , "  # CSV output
+            f"-- {target_cmd}"
+        )
+        # Execute and parse output...
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True,
+            text=True, timeout=duration_s
+        )
+        return self._parse_output(result.stderr, label)
+7.2 Automated Dataset Generation Pipeline
+#!/bin/bash
+# generate_dataset.sh - Automated MDS dataset collection
+OUTPUT_DIR="./mds_dataset"
+INTERVAL=100  # ms
+DURATION=60   # seconds per run
+RUNS=100      # repetitions per class
+# Benign workloads
+for run in $(seq 1 $RUNS); do
+  echo "Benign run $run/$RUNS"
+Page 9/15
+Creating Static Data for MDS Analysis
+  perf stat -e $EVENTS -I $INTERVAL -x , \
+    -- stress --cpu 4 --timeout ${DURATION}s \
+    2>> "$OUTPUT_DIR/benign_cpu_${run}.csv"
+done
+# MDS Attack workloads (requires PoC tools)
+for run in $(seq 1 $RUNS); do
+  echo "MFBDS attack run $run/$RUNS"
+  perf stat -e $EVENTS -I $INTERVAL -x , -a \
+    2>> "$OUTPUT_DIR/mfbds_${run}.csv" &
+  PID=$!
+  ./zombieload_poc --duration $DURATION
+  kill $PID
+done
+Page 10/15
+Creating Static Data for MDS Analysis
+8. Labeling Strategy
+8.1 Ground Truth Labels
+Since we control the experiment, labels are determined by the program running during data collection:
+-Benign: Known-good programs (benchmarks, normal applications)
+-Attack: Known MDS PoC implementations with verified functionality
+Each sample receives a label based on what was executing during that sampling interval.
+8.2 Handling Transition Periods
+During program startup and shutdown, buffer contents may not be representative:
+-Discard first 5 seconds of each run (warmup period)
+-Discard last 2 seconds (cooldown period)
+-Mark boundary samples with a "transition" label for separate analysis
+8.3 Multi-Label Scenarios
+In cross-thread attack scenarios where attacker and victim run simultaneously:
+-Label from the system perspective: "attack_active" vs "normal"
+-Track both attacker and victim process IDs for correlation
+-Record which core/thread each process is running on
+Page 11/15
+Creating Static Data for MDS Analysis
+9. Dataset Validation
+9.1 Statistical Validation
+Verify dataset quality before model training:
+-Class balance: Ensure roughly equal samples per class (or use stratification)
+-Feature variance: All features should show non-zero variance
+-Outlier detection: Remove impossible values (negative counts, etc.)
+-Reproducibility: Re-run experiments and verify consistent distributions
+9.2 Separability Analysis
+Before training complex models, verify that attack and benign classes are distinguishable:
+-Compute t-test/Mann-Whitney U between classes for each feature
+-Visualize feature distributions (box plots, histograms)
+-Compute mutual information between features and labels
+-Apply PCA/t-SNE to visualize class separation in reduced dimensions
+9.3 Cross-Validation Considerations
+When splitting data for cross-validation:
+-Use run-level splitting (all samples from one run go to same fold)
+-Use time-aware splitting if temporal patterns exist
+-Stratify by attack variant to ensure all types in each fold
+Page 12/15
+Creating Static Data for MDS Analysis
+10. Example Dataset and Code
+10.1 Sample Python Script for Synthetic Dataset Generation
+import numpy as np
+import pandas as pd
+def generate_synthetic_mds_dataset(n_samples=10000):
+    """Generate synthetic MDS detection dataset.
+    
+    Simulates HPC readings for benign and attack scenarios
+    based on published research distributions.
+    """
+    np.random.seed(42)
+    data = []
+    
+    classes = {
+        "benign_cpu": {"weight": 0.25, "attack": False},
+        "benign_mem": {"weight": 0.15, "attack": False},
+        "benign_io":  {"weight": 0.10, "attack": False},
+        "msbds":      {"weight": 0.15, "attack": True},
+        "mfbds":      {"weight": 0.15, "attack": True},
+        "mlpds":      {"weight": 0.10, "attack": True},
+        "mdsum":      {"weight": 0.10, "attack": True},
+    }
+    
+    for cls, info in classes.items():
+        n = int(n_samples * info["weight"])
+        if info["attack"]:
+            # Attack: high cache misses, page faults
+            llc_misses = np.random.poisson(50000, n)
+            l1d_misses = np.random.poisson(80000, n)
+            page_faults = np.random.poisson(500, n)
+            branch_misses = np.random.poisson(3000, n)
+        else:
+            # Benign: normal operation levels
+            llc_misses = np.random.poisson(5000, n)
+            l1d_misses = np.random.poisson(15000, n)
+            page_faults = np.random.poisson(20, n)
+            branch_misses = np.random.poisson(1000, n)
+        
+        instructions = np.random.poisson(5000000, n)
+        cache_refs = np.random.poisson(100000, n)
+        
+        for i in range(n):
+            data.append({
+                "llc_load_misses": llc_misses[i],
+                "l1d_load_misses": l1d_misses[i],
+                "branch_misses": branch_misses[i],
+                "instructions": instructions[i],
+                "cache_references": cache_refs[i],
+                "page_faults": page_faults[i],
+                "cache_miss_ratio": llc_misses[i]/max(cache_refs[i],1),
+                "label": cls,
+                "is_attack": int(info["attack"])
+Page 13/15
+Creating Static Data for MDS Analysis
+            })
+    
+    df = pd.DataFrame(data)
+    df.to_csv("mds_synthetic_dataset.csv", index=False)
+    return df
+if __name__ == "__main__":
+    df = generate_synthetic_mds_dataset()
+    print(f"Dataset shape: {df.shape}")
+    print(f"Class distribution:\n{df.label.value_counts()}")
+Page 14/15
+Creating Static Data for MDS Analysis
+11. References
+[1] HARPY Dataset: "Hardware Attack detectoR via Performance counters analYsis," Otero et al., 2025.
+[2] MAD-EN: "Microarchitectural Attack Detection through Energy Consumption," Roy Dipta & Gulmezoglu.
+[3] MADFAM: "MicroArchitectural Data Framework and Methodology," Langehaug et al., IEEE Access 2022.
+[4] "Performance Counters to Rescue," Alam et al., IACR ePrint 2017/564.
+[5] "Fight Hardware with Hardware," Carna et al., arXiv:2402.13281, 2024.
+[6] "Phased-Guard: Multi-Phase ML Framework for Zero-Day Microarch Attacks," IEEE 2020.
+[7] Palumbo, "ML-Based Detection of Microarchitectural Attacks on RISC-V via Gem5," TechDefense 2025.
+[8] Linux perf documentation: https://perf.wiki.kernel.org/
+Page 15/15

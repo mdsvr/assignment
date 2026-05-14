@@ -1,145 +1,264 @@
-Object Detection Model Building
-Overview
-This project is part of an AI Intern assignment focused on building an object detection model using a pre-trained CNN backbone. The model uses EfficientNet-B0 as the backbone, integrated with a Feature Pyramid Network (FPN) and Faster R-CNN for object detection. It is trained on the COCO 2017 dataset, with optimizations for handling corrupted images, GPU memory constraints, and training speed.
-Key Features
+# MDS Static Model for Microarchitectural Data Sampling Analysis
 
-Backbone: EfficientNet-B0
-Detection Framework: Feature Pyramid Network (FPN) with Faster R-CNN
-Dataset: COCO 2017 (train2017: 118,286 valid images, val2017: 4,995 valid images after filtering) 
-Optimizations:
-Mixed precision training using torch.amp
-Gradient accumulation for effective batch size of 16
-Image resizing to 224x224 for faster training
-Handling of corrupted images by skipping them during dataset loading
-torch.compile for faster model execution (PyTorch 2.0+ required)
+This project implements a comprehensive static model for MDS (Microarchitectural Data Sampling) attack detection based on the research document: **"Creating Static Data for MDS Analysis" (May 2026)**.
 
+## Overview
 
+The static model provides a complete framework for:
+- Generating synthetic datasets for MDS detection research
+- Engineering features from Hardware Performance Counters (HPCs)
+- Validating dataset quality
+- Training ML models for MDS attack detection
 
-Prerequisites
+## Project Structure
 
-Hardware: NVIDIA GPU (e.g., RTX 3050 with 4GB VRAM) for training
-OS: Windows (tested on Windows with Python 3.11)
-Python: 3.8+
-Dependencies:
-torch (2.0+ recommended for torch.compile)
-torchvision
-pycocotools
-efficientnet_pytorch
-Pillow
+```
+.
+├── mds_static_model.py              # Core data structures and HPC collection framework
+├── feature_engineering.py          # Feature extraction (raw, derived, MDS-specific, temporal)
+├── synthetic_data_generator.py      # Synthetic data generation with workload profiles
+├── dataset_validator.py            # Dataset validation and analysis tools
+├── mds_detector.py                 # ML-based detection models
+├── generate_mds_dataset.py          # Standalone script to generate datasets
+├── mds_dataset.csv                 # Generated synthetic dataset (example)
+└── README.md                       # This file
+```
 
+## Generated Dataset
 
+The dataset (`mds_dataset.csv`) follows the schema specified in PDF Section 6.1:
 
-Setup Instructions
+### Schema
+- `timestamp`: Unix timestamp of sample
+- `sample_id`: Unique sample identifier
+- `run_id`: Experiment run identifier (for proper train/test splitting)
+- `llc_load_misses`: LLC load misses count
+- `l1d_load_misses`: L1 data cache load misses
+- `branch_misses`: Branch misprediction count
+- `branch_instr`: Total branch instructions
+- `instructions`: Instructions retired
+- `cache_references`: Cache reference count
+- `page_faults`: Page fault count
+- `context_switches`: Context switch count
+- `cpu_cycles`: CPU cycles elapsed
+- `cache_miss_ratio`: Derived feature (misses/references)
+- `ipc`: Derived feature (instructions/cycles)
+- `branch_miss_rate`: Derived feature (misses/branches)
+- `label`: Class label (benign_cpu, benign_mem, benign_io, benign_mixed, msbds, mfbds, mlpds, mdsum)
+- `attack_variant`: MDS variant (if attack)
 
-Clone the Repository:
-git clone https://github.com/<your-username>/object-detection-model-building.git
-cd object-detection-model-building
+### Class Distribution
+The generated dataset includes:
+- **Benign Workloads** (54.5%):
+  - `benign_cpu`: CPU-intensive normal workload (22.7%)
+  - `benign_mem`: Memory-intensive normal workload (13.6%)
+  - `benign_io`: I/O-intensive normal workload (9.1%)
+  - `benign_mixed`: Mixed normal workload (9.1%)
 
+- **MDS Attack Variants** (45.5%):
+  - `msbds`: Store Buffer Data Sampling attack (13.6%)
+  - `mfbds`: Fill Buffer Data Sampling attack (13.6%)
+  - `mlpds`: Load Port Data Sampling attack (9.1%)
+  - `mdsum`: Uncacheable Memory Sampling (9.1%)
 
-Install Dependencies:
-pip install torch torchvision pycocotools efficientnet_pytorch Pillow
+## Usage
 
+### 1. Generate a New Dataset
 
-Download the COCO 2017 Dataset:
+```bash
+# Generate dataset with default settings (10,000 samples)
+python generate_mds_dataset.py
 
-Download train2017.zip, val2017.zip, and annotations_trainval2017.zip from http://cocodataset.org/#download.
-Extract them into the following structure:dataset/
-├── train2017/
-├── val2017/
-├── annotations/
-│   ├── instances_train2017.json
-│   ├── instances_val2017.json
+# Generate custom dataset
+python generate_mds_dataset.py --n_samples 20000 --output my_dataset.csv --samples_per_run 100
+```
 
+**Options:**
+- `--n_samples`: Total number of samples (default: 10000)
+- `--output`: Output CSV file path (default: mds_synthetic_dataset.csv)
+- `--samples_per_run`: Samples per experimental run (default: 100)
+- `--sampling_interval`: Sampling interval in milliseconds (default: 100ms)
+- `--random_seed`: Random seed for reproducibility (default: 42)
 
+### 2. Load and Analyze the Dataset
 
+```python
+import pandas as pd
 
-Verify Dataset:
+# Load the dataset
+df = pd.read_csv('mds_dataset.csv')
 
-Ensure the dataset paths in train.py match your directory structure:data_root = 'dataset'
-train_img_dir = os.path.join(data_root, 'train2017')
-train_ann_file = os.path.join(data_root, 'annotations', 'instances_train2017.json')
-val_img_dir = os.path.join(data_root, 'val2017')
-val_ann_file = os.path.join(data_root, 'annotations', 'instances_val2017.json')
+# View basic statistics
+print(df.describe())
+print(df['label'].value_counts())
 
+# Separate attack and benign samples
+attack_labels = ['msbds', 'mfbds', 'mlpds', 'mdsum']
+attack_df = df[df['label'].isin(attack_labels)]
+benign_df = df[~df['label'].isin(attack_labels)]
+```
 
+### 3. Feature Engineering
 
+```python
+from feature_engineering import MDSFeatureEngineer
 
+# Initialize feature engineer
+engineer = MDSFeatureEngineer(window_size=10)
 
-Usage
+# Extract all features
+df_with_features = engineer.extract_all_features(df)
 
-Train the Model:
-python train.py
+# Get feature importance scores
+importance = engineer.get_feature_importance_scores(df_with_features)
+print("Top features:", list(importance.keys())[:10])
+```
 
+### 4. Dataset Validation
 
-This trains the model for 5 epochs on the entire COCO train2017 dataset (118,286 valid images).
-Training takes ~8.5 hours on an NVIDIA RTX 3050 (1.7 hours per epoch with 14,786 batches).
-Model weights are saved as efficientnet_fpn_coco_epoch_{epoch}.pth.
+```python
+from dataset_validator import DatasetValidator
 
+# Initialize validator
+validator = DatasetValidator(df)
 
-Monitor GPU Usage:
+# Run statistical validation
+validator.statistical_validation()
 
-During training, check GPU usage with:nvidia-smi
+# Run separability analysis
+validator.separability_analysis()
 
+# Generate validation report
+print(validator.generate_validation_report())
+```
 
-Expected usage: ~3000MiB / 4096MiB, 95-100% GPU utilization.
+### 5. Train MDS Detection Model
 
+```python
+from mds_detector import MDSDetector
 
-Evaluate and Infer:
+# Initialize detector
+detector = MDSDetector(model_type='random_forest')
 
-After training, run the evaluation script (if available):python evaluate_and_infer.py
+# Split data by run_id (prevents data leakage)
+X_train, X_val, X_test, y_train, y_val, y_test = detector.split_by_run(df)
 
+# Train the model
+detector.train(X_train, y_train, X_val, y_val)
 
-This should compute metrics like mAP, precision, and recall, and generate detection visualizations.
+# Evaluate
+metrics = detector.evaluate(X_test, y_test)
+detector.print_evaluation_report(metrics)
 
+# Get feature importance
+importance = detector.get_feature_importance()
+```
 
+## Key Features
 
-File Structure
-object-detection-model-building/
-├── dataset/                       # COCO dataset (not included in repo)
-│   ├── train2017/                # Training images
-│   ├── val2017/                  # Validation images
-│   ├── annotations/              # COCO annotations
-├── train.py                      # Training script
-├── coco_dataset.py               # Dataset loading and preprocessing
-├── fpn_efficientnet.py           # Model definition (EfficientNet-B0 + FPN + Faster R-CNN)
-├── evaluate_and_infer.py         # Evaluation and inference script (not provided)
-├── efficientnet_fpn_coco_epoch_*.pth  # Trained model weights
-├── Experience_Report.tex         # Experience report in LaTeX
-└── README.md                     # Project documentation
+### 1. HPC Data Collection
+- Implements Hardware Performance Counter event definitions from PDF Section 2.1
+- Supports 8 key HPC events for MDS detection
+- Follows 100ms sampling interval recommendation from PDF Section 3.3
 
-Project Details
+### 2. Feature Engineering
+- **Raw Counter Features**: Absolute values, rates, basic ratios (PDF 4.1)
+- **Derived Features**: Statistical features over sliding windows (PDF 4.2)
+- **MDS-Specific Features**: Tailored for MDS detection (PDF 4.3)
+- **Temporal Features**: Time-series analysis (PDF 4.4)
 
-Training Configuration:
-Batch size: 8 (effective batch size 16 with gradient accumulation)
-Image size: 224x224
-Optimizer: SGD (lr=0.001, momentum=0.9, weight_decay=0.0005)
-Learning rate scheduler: StepLR (step_size=3, gamma=0.1)
-Epochs: 5
+### 3. Synthetic Data Generation
+- Workload profiles based on PDF Sections 5.1 and 5.2
+- Poisson distribution for realistic HPC simulation
+- Run-based splitting for proper ML evaluation
+- Controlled environment simulation
 
+### 4. Dataset Validation
+- Statistical validation (class balance, feature variance, outliers)
+- Separability analysis (statistical tests, mutual information)
+- Cross-validation considerations (run-level splitting)
 
-Performance:
-Training time: 1.7 hours per epoch (8.5 hours total)
-Compute time per iteration: ~0.40s
-Data time per iteration: ~0.01s
+### 5. ML Detection Models
+- Multiple model types: Random Forest, Gradient Boosting, Logistic Regression, SVM, Neural Network
+- Run-level splitting to prevent data leakage
+- Comprehensive evaluation metrics
+- Feature importance analysis
 
+## Methodology
 
+This implementation follows the methodology described in the research document:
 
-Challenges and Solutions
+1. **Data Sources**: Uses Hardware Performance Counters (HPCs) as primary data source (Section 2)
+2. **Collection**: Implements perf-tool methodology with 100ms intervals (Section 3)
+3. **Feature Engineering**: Four-tier feature extraction approach (Section 4)
+4. **Data Generation**: Synthetic data based on workload profiles (Section 5)
+5. **Schema Design**: CSV format following PDF specification (Section 6)
+6. **Labeling Strategy**: Binary and multi-class labeling (Section 8)
+7. **Validation**: Statistical and separability validation (Section 9)
 
-Corrupted Images: Handled by skipping them during dataset loading in coco_dataset.py.
-Long Training Time: Optimized by using EfficientNet-B0, resizing images to 224x224, and leveraging torch.compile.
-GPU Memory Constraints: Managed with mixed precision training and gradient accumulation.
+## Requirements
 
-Acknowledgments
+```
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+seaborn
+PyPDF2
+```
 
-This project was completed as part of an AI Intern assignment.
-Special thanks to Grok (built by xAI) for assistance with code generation, debugging, and optimization.
-The COCO dataset team for providing the dataset.
-The efficientnet_pytorch and torchvision communities for their libraries.
+Install dependencies:
+```bash
+pip install numpy pandas scipy scikit-learn matplotlib seaborn PyPDF2
+```
 
-Author
+## Example Workflow
 
-Meka Durga Sai Vardhan Reddy
+```python
+# 1. Generate dataset
+from generate_mds_dataset import MDSDatasetGenerator
 
-License
-This project is licensed under the MIT License.
+generator = MDSDatasetGenerator(sampling_interval_ms=100)
+df = generator.generate_default_dataset(n_samples=10000)
+generator.save_dataset(df, 'my_mds_dataset.csv')
+
+# 2. Validate dataset
+from dataset_validator import DatasetValidator
+
+validator = DatasetValidator(df)
+validator.statistical_validation()
+validator.separability_analysis()
+print(validator.generate_validation_report())
+
+# 3. Engineer features
+from feature_engineering import MDSFeatureEngineer
+
+engineer = MDSFeatureEngineer(window_size=10)
+df_features = engineer.extract_all_features(df)
+
+# 4. Train detector
+from mds_detector import MDSDetector
+
+detector = MDSDetector(model_type='random_forest')
+X_train, X_val, X_test, y_train, y_val, y_test = detector.split_by_run(df_features)
+detector.train(X_train, y_train, X_val, y_val)
+metrics = detector.evaluate(X_test, y_test)
+detector.print_evaluation_report(metrics)
+```
+
+## Notes
+
+- The generated dataset uses run-based splitting to prevent data leakage, as recommended in PDF Section 6.3
+- Feature engineering can be computationally intensive for large datasets
+- The ML detector supports multiple model types - Random Forest is recommended for most use cases
+- Sampling interval of 100ms provides optimal tradeoff between resolution and manageability (PDF Section 3.3)
+
+## References
+
+This implementation is based on the research document: **"Creating Static Data for MDS Analysis" (May 2026)**
+
+Key references from the document:
+- HARPY Dataset: "Hardware Attack detectoR via Performance counters analYsis"
+- MAD-EN: "Microarchitectural Attack Detection through Energy Consumption"
+- MADFAM: "MicroArchitectural Data Framework and Methodology"
